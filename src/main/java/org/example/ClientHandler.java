@@ -1,5 +1,6 @@
 package org.example;
 
+import javax.management.Notification;
 import java.io.*;
 import java.net.*;
 import java.util.*;
@@ -9,7 +10,7 @@ public class ClientHandler extends Thread {
     private final Socket socket;
     private ObjectInputStream in;
     private ObjectOutputStream out;
-
+    public boolean timedOut=false;
     public ClientHandler(Socket socket) {
         this.socket = socket;
     }
@@ -46,6 +47,16 @@ public class ClientHandler extends Thread {
                             totalRead += bytesRead;
                         }
                         fos.close();
+
+                        String baseName = fileName.replaceFirst("\\.png$", "");
+                        String txtPath = saveDir + baseName + ".txt";
+                        try (BufferedWriter txtWriter = new BufferedWriter(new FileWriter(txtPath))) {
+                            txtWriter.write("The "+ baseName + " is amazing, fantastic");
+                            System.out.println("Text file created at: " + txtPath);
+                        } catch (IOException e) {
+                            System.out.println("❌ Failed to create .txt file: " + e.getMessage());
+                        }
+
                         String profilePath = "src/main/java/org/example/ServerFolder/Profile_XClient" + clientId + ".txt";
                         updateFile(profilePath,clientId);
                         System.out.println("Image received and saved to: " + fullImagePath);
@@ -53,9 +64,11 @@ public class ClientHandler extends Thread {
                         dos.writeInt(1);
                         dos.flush();
                         for (int follower : Server.Followers.get(clientId)){
-                            String title=clientId+" post a photo with name: "+ fileName.replaceFirst("\\.png$", "");
-                            Notifications not=new Notifications(title,follower,0,clientId);
-                            Server.Notification.get(follower).add(not);
+                            if(Server.clientConnections.containsKey(follower)){
+                                String title=clientId+" post a photo with name: "+ fileName.replaceFirst("\\.png$", "");
+                                Notifications notific=new Notifications(title,follower,0,clientId);
+                                Server.Notification.get(follower).add(notific);
+                            }
                         }
                     }
                     case 12 -> {
@@ -114,6 +127,8 @@ public class ClientHandler extends Thread {
 
         } catch (IOException | ClassNotFoundException e) {
             System.out.println("❌ Client disconnected or error occurred.");
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
         } finally {
             try {
                 socket.close();
@@ -134,26 +149,7 @@ public class ClientHandler extends Thread {
             System.out.println("Error writing to profile file: " + e.getMessage());
         }
     }
-    public static void CreateFiles(String fileName, String folderPath, int maxKey){
-        try{
-            File file1 = new File(folderPath+ fileName);
-            System.out.println(folderPath+fileName);
-            if (file1.createNewFile()) {
-                System.out.println("File created: " + file1.getName());
-            } else {
-                System.out.println("File already exists.");
-            }
 
-        }catch (IOException e){
-            e.printStackTrace();
-        }
-        try{
-            Path path = Paths.get(folderPath+ "Client"+(maxKey+1)+"Images");
-            Files.createDirectory(path);
-        }catch (IOException e){
-            System.out.println("Folder already exists.");
-        }
-    }
     public ArrayList<Integer> Search(String PhotoName){
         ArrayList<Integer> matchingClients = new ArrayList<>();
 
@@ -228,6 +224,12 @@ public class ClientHandler extends Thread {
             profile.createNewFile();
         }
 
+        if (!profile.exists()) {
+            profile.createNewFile();
+        }
+        Server.fileOccupied.put(folderPath + fileName,0);
+        ArrayList<Integer> ArrayList= new ArrayList<>();
+        Server.waitingClients.put(folderPath + fileName,ArrayList);
         Files.createDirectories(Paths.get(folderPath + "Client" + newId + "Images/"));
 
         System.out.println("🆕 Registered client " + newId);
@@ -266,54 +268,59 @@ public class ClientHandler extends Thread {
         }
     }
     //Access Profile
-    private void handleProfileAccess(int clientId, String filePath) throws IOException, ClassNotFoundException {
+    private void handleProfileAccess(int clientId, String filePath) throws IOException, ClassNotFoundException, InterruptedException {
         System.out.println("Client " + clientId + " is attempting to access: " + filePath);
+        if(Server.fileOccupied.get(filePath)==0){
 
-        synchronized (Server.class) {
-            File lockFile = new File(filePath + ".lock");
-            ArrayList<Integer> waitingClients = Server.waitingClients.computeIfAbsent(filePath, k -> new ArrayList<>());
+            Server.fileOccupied.replace(filePath,1);
+            out.writeInt(-1);
+            out.flush();
 
-            if (lockFile.exists()) {
-                waitingClients.add(clientId);
-                out.writeObject("File is currently locked. You are in queue.");
+            out.writeObject(sendProfileContent(filePath));
+            out.flush();
+            Thread timer=startTimer(10000);
+            int anwser=in.readInt();
+            if(anwser==1){
+                timer.join();
+                String msg1="The Server will auto-unlock the file";
+                out.writeObject(msg1);
                 out.flush();
-                return;
+                Server.fileOccupied.replace(filePath,0);
+                notifyWaitingClients(filePath);
+                System.out.println("The files was unlock and Notifications were send");
+            }else{
+                String msg2="ACK";
+                out.writeObject(msg2);
+                out.flush();
             }
-
-            lockProfileFile(lockFile);
-
-            startTimeoutTimer(clientId, lockFile);
-
-            sendProfileContent(filePath);
-
-            waitForUnlockSignal(clientId, lockFile, waitingClients);
+        }else{
+            Server.waitingClients.get(filePath).add(clientId);
+            int length=Server.waitingClients.get(filePath).size();
+            out.write(length);
+            out.flush();
         }
+
     }
 
-    private void lockProfileFile(File lockFile) throws IOException {
-        if (!lockFile.createNewFile()) {
-            throw new IOException("Failed to create lock file.");
-        }
-    }
-
-    private void startTimeoutTimer(int clientId, File lockFile) {
-        new Thread(() -> {
+    public Thread startTimer(long milliseconds) {
+        Thread timerThread = new Thread(() -> {
             try {
-                Thread.sleep(15000); // 15 seconds
-                if (lockFile.exists()) {
-                    try {
-                        ObjectOutputStream timeoutOut = new ObjectOutputStream(socket.getOutputStream());
-                        timeoutOut.writeObject("⚠️ Timeout: Please save and release the file. It will be auto-unlocked soon.");
-                        timeoutOut.flush();
-                    } catch (IOException e) {
-                        System.out.println("Unable to send timeout warning to client " + clientId);
-                    }
-                }
+                Thread.sleep(milliseconds);
+                setTimedOut(true);
+                System.out.println("⏰ Timer finished.");
             } catch (InterruptedException ignored) {}
-        }).start();
+        });
+        timerThread.start();
+        return timerThread;
     }
 
-    private void sendProfileContent(String filePath) throws IOException {
+    public boolean hasTimedOut() {
+        return timedOut;
+    }
+    public void setTimedOut(boolean timedOut) {
+        this.timedOut = timedOut;
+    }
+    private String sendProfileContent(String filePath) throws IOException {
         BufferedReader reader = new BufferedReader(new FileReader(filePath));
         StringBuilder content = new StringBuilder();
         String line;
@@ -321,19 +328,18 @@ public class ClientHandler extends Thread {
             content.append(line).append("\n");
         }
         reader.close();
-        out.writeObject(content.toString());
-        out.flush();
+        return content.toString();
     }
+    public static void notifyWaitingClients(String filePath) {
+        ArrayList<Integer> clients = Server.waitingClients.get(filePath);
 
-    private void waitForUnlockSignal(int clientId, File lockFile, ArrayList<Integer> waitingClients) throws IOException, ClassNotFoundException {
-        String unlockSignal = (String) in.readObject();
-        if ("UNLOCK".equalsIgnoreCase(unlockSignal)) {
-            lockFile.delete();
-            System.out.println("Client " + clientId + " has unlocked the file.");
-
-            if (!waitingClients.isEmpty()) {
-                waitingClients.remove(0);
+        if (clients != null) {
+            for (int clientId : clients) {
+                Notifications notific= new Notifications("The file is free",-1,3 ,clientId);
+                Server.Notification.get(clientId).add(notific);
             }
+        } else {
+            System.out.println("ℹ️ No waiting clients for: " + filePath);
         }
     }
     //Search
@@ -364,18 +370,27 @@ public class ClientHandler extends Thread {
         byte[] fileBytes = Files.readAllBytes(file.toPath());
         sendPhotoChunks(fileBytes);
 
+        out.writeInt(99); // Signal: text is coming
+        out.flush();
+
         sendAccompanyingText(serverId, photoName);
+
+        out.writeInt(100); // Signal: final confirmation message is coming
+        out.flush();
+
         out.writeUTF("The transmission is completed");
         out.flush();
 
         copyImageAndTextFiles(serverId, clientId, photoName);
         System.out.println("Server synced files for Client" + clientId);
+
     }
     private void sendPhotoChunks(byte[] fileBytes) throws IOException {
         int totalParts = 10;
         int chunkSize = fileBytes.length / totalParts;
         int extra = fileBytes.length % totalParts;
 
+        boolean[] flags = new boolean[totalParts];
         for (int i = 0; i < totalParts; i++) {
             int start = i * chunkSize;
             int end = (i == totalParts - 1) ? (start + chunkSize + extra) : (start + chunkSize);
@@ -386,25 +401,28 @@ public class ClientHandler extends Thread {
 
             while (!acknowledged && retries < 3) {
                 try {
+                    System.out.println("Part Number: "+ i + " Length: "+ chunk.length);
                     out.writeInt(i);
+                    out.flush();
+
                     out.writeInt(chunk.length);
+                    out.flush();
+
                     out.write(chunk);
                     out.flush();
 
-                    socket.setSoTimeout(3000);
+                    socket.setSoTimeout(5000);
 
                     int ack = in.readInt();
-
+                    System.out.println("🛂 Received ACK: " + ack + " (expecting " + i + ")");
                     if (ack == i) {
                         acknowledged = true;
-                    } else if (ack == i - 1) {
-                        System.out.println("⏸️ Received duplicate ACK for part " + ack + " — delaying before continuing...");
-                        try {
-                            Thread.sleep(1500); // 1.5-second delay
-                        } catch (InterruptedException ignored) {}
-                        acknowledged = true;
+                        flags[i] = true;
+                    } else if (ack < i) {
+                        System.out.println("🔁 Duplicate ACK received for part " + ack);
+                        // Don't retry, just ignore and wait again
                     } else {
-                        System.out.println("⚠️ Unexpected ACK: " + ack + " for part " + i);
+                        System.out.println("⚠️ Invalid or unexpected ACK: " + ack + ", retrying...");
                         retries++;
                     }
 
@@ -416,11 +434,30 @@ public class ClientHandler extends Thread {
                     return;
                 }
             }
+            if(i==totalParts-1){
+                System.out.println("We are at the chunk: "+ (totalParts-1) + " And the i is: "+ i);
+                out.writeInt(-2);
+                out.flush();
+            }
 
             if (!acknowledged) {
                 System.out.println("❌ Failed to deliver part " + i + " after 3 retries. Aborting.");
+                out.writeInt(-1);  // special code for ABORT
+                out.flush();
                 return;
             }
+        }
+        boolean allDelivered = true;
+        for (int j = 0; j < flags.length; j++) {
+            if (!flags[j]) {
+                allDelivered = false;
+                System.out.println("❌ Chunk " + j + " was not acknowledged.");
+            }
+        }
+        if (allDelivered) {
+            System.out.println("✅ All chunks were successfully acknowledged.");
+        } else {
+            System.out.println("⚠️ Some chunks failed to be acknowledged.");
         }
     }
     private void sendAccompanyingText(int serverId, String photoName) throws IOException {
@@ -445,9 +482,8 @@ public class ClientHandler extends Thread {
         String photoPath = "src/main/java/org/example/ServerFolder/Client" + serverId + "Images/" + photoName + ".png";
         String textPath = "src/main/java/org/example/ServerFolder/Client" + serverId + "Images/" + photoName + ".txt";
         String destImageFolder = "src/main/java/org/example/ServerFolder/Client" + clientId + "Images/";
-        String destTextFile = destImageFolder + photoName + ".txt";
 
         copyfiles(photoPath, destImageFolder);
-        copyfiles(textPath, destTextFile);
+        copyfiles(textPath, destImageFolder);
     }
 }

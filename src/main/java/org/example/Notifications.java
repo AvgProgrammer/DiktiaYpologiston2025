@@ -4,9 +4,12 @@ import java.io.Serializable;
 
 public class Notifications implements Serializable{
     private int id;
-    private String Title; // The Number '0' for a post notification and the number '1' for a request
+    private String Title;
     private int ClientId;
-    private int type;
+    private int type; /*The Number '0' for a post notification
+                        The Number '1' for a request
+                        The Number '2' for a request accepted
+                        The number '3' for file */
     public Notifications(String title, int clientId, int type,int id) {
         this.Title = title;
         this.ClientId = clientId;

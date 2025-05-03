@@ -15,6 +15,7 @@ public class Server extends Thread {
     public static HashMap<Integer, ArrayList<Integer> >Following= new HashMap<>();
     public static HashMap<Integer, ArrayList<Notifications> > Notification= new HashMap<>();
     public static HashMap<String, ArrayList<Integer>> waitingClients = new HashMap<>();
+    public static HashMap<String, Integer> fileOccupied = new HashMap<>();
 
     public static void main(String args[]) {
         loadSocialGraphFromFile("src/main/java/org/example/SocialGraph.txt");
@@ -68,7 +69,6 @@ public class Server extends Thread {
             System.out.println("Server Is Open");
             while (true) {
                 socket=serverSocket.accept();
-                System.out.println("Client with socket: "+socket +" connected" );
                 new  ClientHandler(socket).start();
 
             }

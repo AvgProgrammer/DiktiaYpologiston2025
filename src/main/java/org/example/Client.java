@@ -29,19 +29,29 @@ public class Client extends Thread {
             String fileName = "Profile_XClient" + clientId + ".txt";
             String folderPath = "src\\main\\java\\org\\example\\DataFolder\\";
             File file = new File(folderPath + fileName);
-            System.out.println(folderPath + fileName);
-            if (file.createNewFile()) {
+            //System.out.println(folderPath + fileName);
+            file.createNewFile();
+            /*if (file.createNewFile()) {
                 System.out.println("File created: " + file.getName());
             } else {
                 System.out.println("File already exists.");
-            }
+            }*/
             
             File file1 = new File("src\\main\\java\\org\\example\\DataFolder\\Profile_XClientGuest"+clientId+".txt");
-            if (file1.createNewFile()) {
+            file1.createNewFile();
+            /*if (file1.createNewFile()) {
                 System.out.println("File created: " + file1.getName());
             } else {
                 System.out.println("File already exists.");
-            }
+            }*/
+
+            File file2 = new File("src\\main\\java\\org\\example\\DataFolder\\Others_Xclient"+clientId+".txt");
+            file2.createNewFile();
+            /*if (file2.createNewFile()) {
+                System.out.println("File created: " + file2.getName());
+            } else {
+                System.out.println("File already exists.");
+            }*/
 
             String ImagefolderPath = "src\\main\\java\\org\\example\\DataFolder\\Client" + clientId + "Image";
             File folder = new File(ImagefolderPath);
@@ -49,12 +59,12 @@ public class Client extends Thread {
             if (!folder.exists()) {
                 boolean success = folder.mkdirs();
                 if (success) {
-                    System.out.println("Folder created successfully at: " + folder.getAbsolutePath());
+                    //System.out.println("Folder created successfully at: " + folder.getAbsolutePath());
                 } else {
-                    System.out.println("Failed to create folder.");
+                    //System.out.println("Failed to create folder.");
                 }
             } else {
-                System.out.println("Folder already exists at: " + folder.getAbsolutePath());
+                //System.out.println("Folder already exists at: " + folder.getAbsolutePath());
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -79,7 +89,15 @@ public class Client extends Thread {
             
             Path imageFileName = PathofPhoto.getFileName();
             Path newImagePath = Files.copy(PathofPhoto, destPath.resolve(imageFileName), StandardCopyOption.REPLACE_EXISTING);
-            
+
+            String baseName = imageFileName.toString().replaceFirst("\\.png$", "");
+
+            // ✅ Create accompanying .txt file in same folder
+            Path txtFilePath = destPath.resolve(baseName + ".txt");
+            try (BufferedWriter txtWriter = new BufferedWriter(new FileWriter(txtFilePath.toFile()))) {
+                txtWriter.write("The "+ baseName + " is amazing, fantastic");
+            }
+
             String profileFilePath = "src/main/java/org/example/DataFolder/Profile_XClient" + clientId + ".txt";
 
             try (BufferedWriter writer = new BufferedWriter(new FileWriter(profileFilePath, true))) {
@@ -123,7 +141,7 @@ public class Client extends Thread {
 
         do {
             System.out.println(
-                    "Please choose one of the following:\n1)Post \n2)Access Profile\n3)Search Photo\n4)Update Social Graph \n5)Notification\n6)Exit"
+                    "Please choose one of the following:\n1)Post \n2)Access Profile\n3)Search Photo\n4)Update Social Graph\n5)Notification\n6)Exit"
             );
             menu_choice = sc.nextInt();
             int number = 10 + menu_choice;
@@ -141,10 +159,11 @@ public class Client extends Thread {
                 client.start();
                 client.join();
             } else if (menu_choice == 2) {
-                System.out.println("Please enter the Id:");
+                System.out.println("The available profiles are: ");
                 for (int i = 0; i < following.size(); i++) {
-                    System.out.print(following.get(i));
+                    System.out.print(following.get(i)+"|");
                 }
+                System.out.println("Please enter the Id:");
                 client.setFindId(sc.nextInt());
                 client.start();
                 client.join();
@@ -158,21 +177,42 @@ public class Client extends Thread {
                 client.join();
 
                 ArrayList<Integer> match=client.getMatchingClients();
-                int i=0;
                 System.out.println("-----");
-                for(Integer item: match){
-                    System.out.println(match);
-                }
-                System.out.println("-----");
-                System.out.println("Choose one:");
+                if(match.isEmpty()){
+                    System.out.println("No image was found with the name \""+imagesName+"\"");
+                }else{
+                    int i=0;
+                    for(Integer item: match){
+                        System.out.println(match);
+                    }
+                    System.out.println("-----");
+                    System.out.println("Choose one:");
 
-                int SenderID=sc.nextInt();
-                Client client1=new Client(17);
-                client1.setFindId(clientId);
-                client1.setUpdateId(SenderID);
-                client1.setEmail(imagesName);
-                client1.start();
-                client1.join();
+                    int SenderID=sc.nextInt();
+                    Client client1=new Client(17);
+                    client1.setFindId(clientId);
+                    client1.setUpdateId(SenderID);
+                    client1.setEmail(imagesName);
+                    client1.start();
+                    client1.join();
+
+                    System.out.println("Enter a comment to include with the repost:");
+                    sc.nextLine(); // clear the buffer after nextInt
+                    String comment = sc.nextLine();
+
+                    // Log the repost to Others_XclientID.txt
+                    String repostLogPath = "src/main/java/org/example/DataFolder/Others_Xclient" + clientId + ".txt";
+                    try (BufferedWriter writer = new BufferedWriter(new FileWriter(repostLogPath, true))) {
+                        writer.write("Reposted from Client " + SenderID + ": " + imagesName + ".png");
+                        writer.newLine();
+                        writer.write("Comment: " + comment);
+                        writer.newLine();
+                        writer.newLine();
+                    } catch (IOException e) {
+                        System.out.println("Failed to log repost: " + e.getMessage());
+                    }
+                }
+
             } else if (menu_choice == 4) {
                 System.out.println(
                         "Please choose one of the following:\n1)Follow \n2)Unfollow"
@@ -343,33 +383,26 @@ public class Client extends Thread {
                 out.writeInt(getFindId());
                 out.flush();
 
-                ObjectInputStream ois = new ObjectInputStream(socket.getInputStream());
-                Object serverResponse = ois.readObject();
+                ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
 
-                if (serverResponse instanceof String) {
-                    String message = (String) serverResponse;
-                    if (message.contains("queue")) {
-                        System.out.println("⏳ " + message);
-                        return;
-                    }
+                int availability = in.readInt();
 
-                    // This is the profile file content
-                    System.out.println("✅ Profile content received.");
-                    saveProfileFileLocally(getFindId(), message);
+                if(availability==-1){
+                    String message= (String) in.readObject();
+                    System.out.println("Profile ----------");
+                    System.out.println(message);
+                    System.out.println("Do you want to return the file\n0)Yes \n1)No:");
+                    Scanner sc1 = new Scanner(System.in);
+                    int anwser = sc1.nextInt();
 
-                    // Simulate editing, then unlocking
-                    System.out.println("📝 Simulating profile update...");
+                    out.writeInt(anwser);
+                    out.flush();
 
-                    try {
-                        Thread.sleep(5000); // Simulate the user viewing/editing the file
-                    } catch (InterruptedException ignored) {}
+                    String response=(String)in.readObject();
 
-                    ObjectOutputStream unlockOut = new ObjectOutputStream(socket.getOutputStream());
-                    unlockOut.writeObject("UNLOCK");
-                    unlockOut.flush();
-                    System.out.println("🔓 File unlocked.");
-                } else {
-                    System.out.println("⚠️ Unexpected response from server.");
+                    System.out.println(response);
+                }else{
+                    System.out.println("The file is locked we will notify you when if unlocked");
                 }
 
             } else if (number == 13) {
@@ -427,40 +460,73 @@ public class Client extends Thread {
                     out.flush();
 
                     ArrayList<byte[]> receivedChunks = new ArrayList<>();
-
-                    for (int i = 0; i < 10; i++) {
-                        int partNumber = in.readInt();
-                        int length = in.readInt();
-                        byte[] chunk = new byte[length];
-                        in.readFully(chunk);
-
-                        System.out.println("Received part " + partNumber + ", size: " + length);
-                        receivedChunks.add(chunk);
-
-                        if (partNumber == 2) {
-                            System.out.println("Client intentionally skips ACK for message 3");
-                            // Skip ACK for first try
-                            Thread.sleep(2500); // Wait to trigger timeout
-                            out.writeInt(partNumber); // Send ACK after delay
-                            out.flush();
-
-                        } else if (partNumber == 5) {
-                            System.out.println("Client delays ACK for message 6");
-                            Thread.sleep(2000); // Simulate long delay
-
-                            out.writeInt(partNumber);
-                            out.flush();
-
-                            Thread.sleep(500); // Duplicate ACK simulation
-
-                            out.writeInt(partNumber);
-                            out.flush();
-                        } else {
-                            out.writeInt(partNumber); // Normal ACK
-                            out.flush();
+                    boolean[] flags = new boolean[10];
+                    boolean allTrue = true;
+                    for (int i = 0; i < flags.length; i++) {
+                        if (!flags[i]) {
+                            allTrue = false;
                         }
                     }
+                    boolean check_number=false;
+                    while(!allTrue || !check_number) {
+                        int partNumber = in.readInt();
+                         if(partNumber == -1){
+                            System.out.println("❌ Server aborted transmission due to delivery failure.");
+                            return;
+                         }else if(partNumber == -2){
+                             System.out.println("Part Number:"+ partNumber);
+                             check_number=true;
 
+                         }else{
+                             int length = in.readInt();
+                             System.out.println("------------------------------------------------");
+                             System.out.println("Part Number:"+ partNumber + " Length:"+ length);
+                             byte[] chunk = new byte[length];
+                             in.readFully(chunk);
+
+                             System.out.println("Received part " + partNumber + ", size: " + length);
+                             if(!flags[partNumber]){
+                                 receivedChunks.add(chunk);
+                             }
+
+                             if (partNumber == 2) {
+                                 System.out.println("Client intentionally skips ACK for message 3");
+                                 Thread.sleep(3000); // Simulate long delay
+
+                                 out.writeInt(partNumber);
+                                 out.flush();
+                             } else if (partNumber == 5) {
+                                 System.out.println("Client delays ACK for message 6");
+                                 Thread.sleep(2000); // Simulate long delay
+
+                                 out.writeInt(partNumber);
+                                 out.flush();
+
+                                 Thread.sleep(500); // Duplicate ACK simulation
+
+                                 out.writeInt(partNumber);
+                                 out.flush();
+                             }else{
+                                 System.out.println("Normal ACK for message " + partNumber);
+                                 out.writeInt(partNumber); // Normal ACK
+                                 out.flush();
+                             }
+                             flags[partNumber]=true;
+
+                             allTrue = true;
+                             for (int j = 0; j < flags.length; j++) {
+                                 if (!flags[j]) {
+                                     allTrue = false;
+                                 }
+                             }
+                         }
+
+                    }
+                    for (int j = 0; j < flags.length; j++) {
+                        if (!flags[j]) {
+                            System.out.println("❌ Chunk " + j + " was not acknowledged.");
+                        }
+                    }
                     Path savePath = Paths.get("src/main/java/org/example/DataFolder/Client" + clientId + "Image/" + getEmail() + ".png");
                     try (FileOutputStream fos = new FileOutputStream(savePath.toFile())) {
                         for (byte[] chunk : receivedChunks) {
@@ -471,11 +537,18 @@ public class Client extends Thread {
                         System.out.println("❌ Error saving image locally: " + e.getMessage());
                     }
 
-                    String textMessage = in.readUTF();
-                    System.out.println("Accompanying Text:\n" + textMessage);
-
-                    String finalMsg = in.readUTF();
-                    System.out.println(finalMsg);
+                    int signal = in.readInt();
+                    System.out.println(signal);
+                    if (signal == 99) {
+                        String textMessage = in.readUTF();
+                        System.out.println("Accompanying Text:\n" + textMessage);
+                    }
+                    int confirm = in.readInt();
+                    System.out.println(confirm);
+                    if (confirm == 100) {
+                        String finalMsg = in.readUTF();
+                        System.out.println(finalMsg);
+                    }
 
                 }
 
@@ -519,14 +592,5 @@ public class Client extends Thread {
             }
         }
         return matches;
-    }
-    private void saveProfileFileLocally(int serverId, String content) {
-        String savePath = "src/main/java/org/example/DataFolder/Profile_XClientGuest" + serverId + ".txt";
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(savePath))) {
-            writer.write(content);
-            System.out.println("💾 Profile saved to: " + savePath);
-        } catch (IOException e) {
-            System.out.println("❌ Failed to save profile file: " + e.getMessage());
-        }
     }
 }
