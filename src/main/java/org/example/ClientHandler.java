@@ -72,9 +72,10 @@ public class ClientHandler extends Thread {
                         }
                     }
                     case 12 -> {
+                        int requesterId=in.readInt();
                         int clientId = in.readInt();
                         String filePath = "src/main/java/org/example/ServerFolder/Profile_XClient" + clientId + ".txt";
-                        handleProfileAccess(clientId, filePath);
+                        handleProfileAccess(requesterId, filePath);
                     }
                     case 13 -> {
                         String photoname=(String) in.readObject();
@@ -103,21 +104,33 @@ public class ClientHandler extends Thread {
                     }
                     case 16 -> {
                         int clientId=in.readInt();
+                        int notificationIndex= in.readInt();
                         Notifications notification1=(Notifications) in.readObject();
-                        Server.Notification.get(clientId).remove(notification1);
+
+                        for(Notifications notif:Server.Notification.get(clientId)){
+                            System.out.println(notif.getTitle()+"|");
+                        }
+
+                        Server.Notification.get(clientId).remove(notificationIndex);
+
+                        System.out.println("----------------");
+                        for(Notifications notif:Server.Notification.get(clientId)){
+                            System.out.println(notif.getTitle()+"|");
+                        }
+
                         int social_choice=in.readInt()+1;
                         String title="";
                         if(social_choice!=1){
                             if (social_choice==2){
                                 title="Follow Request Accepted";
-                                System.out.println("Client "+clientId+" has accept "+ notification1.getId());
+                                System.out.println("Client "+clientId+" has accept "+ notification1.getClientId());
                                 Server.Followers.get(clientId).add(notification1.getId());
                             }else if(social_choice==3){
-                                System.out.println("Client "+clientId+" has reject "+ notification1.getId());
+                                System.out.println("Client "+clientId+" has reject "+ notification1.getClientId());
                                 title="Follow Request Rejected";
                             }
                             Notifications sendNotification=new Notifications(title,notification1.getId(),social_choice,clientId);
-                            Server.Notification.get(notification1.getId()).add(sendNotification);
+                            Server.Notification.get(notification1.getClientId()).add(sendNotification);
                         }
                     }
                     case 17 -> handlePhotoRequest();
@@ -268,8 +281,8 @@ public class ClientHandler extends Thread {
         }
     }
     //Access Profile
-    private void handleProfileAccess(int clientId, String filePath) throws IOException, ClassNotFoundException, InterruptedException {
-        System.out.println("Client " + clientId + " is attempting to access: " + filePath);
+    private void handleProfileAccess(int requesterID, String filePath) throws IOException, ClassNotFoundException, InterruptedException {
+        System.out.println("Client " + requesterID + " is attempting to access: " + filePath);
         if(Server.fileOccupied.get(filePath)==0){
 
             Server.fileOccupied.replace(filePath,1);
@@ -278,25 +291,31 @@ public class ClientHandler extends Thread {
 
             out.writeObject(sendProfileContent(filePath));
             out.flush();
-            Thread timer=startTimer(10000);
+            Thread timer=startTimer(60000);
             int anwser=in.readInt();
             if(anwser==1){
                 timer.join();
                 String msg1="The Server will auto-unlock the file";
                 out.writeObject(msg1);
                 out.flush();
-                Server.fileOccupied.replace(filePath,0);
-                notifyWaitingClients(filePath);
-                System.out.println("The files was unlock and Notifications were send");
             }else{
                 String msg2="ACK";
                 out.writeObject(msg2);
                 out.flush();
             }
+            Server.fileOccupied.replace(filePath,0);
+            notifyWaitingClients(filePath);
+            System.out.println("The files was unlock and Notifications were send");
+
         }else{
-            Server.waitingClients.get(filePath).add(clientId);
-            int length=Server.waitingClients.get(filePath).size();
-            out.write(length);
+            System.out.println("The file is locked");
+            Server.waitingClients.get(filePath).add(requesterID);
+            System.out.println("---------");
+            for(int clients : Server.waitingClients.get(filePath)){
+                System.out.println(clients);
+            }
+            System.out.println("---------");
+            out.writeInt(1);
             out.flush();
         }
 
@@ -314,9 +333,6 @@ public class ClientHandler extends Thread {
         return timerThread;
     }
 
-    public boolean hasTimedOut() {
-        return timedOut;
-    }
     public void setTimedOut(boolean timedOut) {
         this.timedOut = timedOut;
     }
@@ -348,9 +364,10 @@ public class ClientHandler extends Thread {
         if (request != 1) {
             out.writeInt(2);
             out.flush();
+            System.out.println("First-Hand Rejected");
             return;
         }
-
+        System.out.println("First-Hand Accepted");
         out.writeInt(1);
         out.flush();
 
@@ -368,8 +385,12 @@ public class ClientHandler extends Thread {
         }
 
         byte[] fileBytes = Files.readAllBytes(file.toPath());
-        sendPhotoChunks(fileBytes);
 
+        boolean success = sendPhotoChunks(fileBytes);
+        if (!success) {
+            System.out.println("❌ Aborting: One or more chunks failed.");
+            return; // Exit without copying or sending additional data
+        }
         out.writeInt(99); // Signal: text is coming
         out.flush();
 
@@ -385,7 +406,7 @@ public class ClientHandler extends Thread {
         System.out.println("Server synced files for Client" + clientId);
 
     }
-    private void sendPhotoChunks(byte[] fileBytes) throws IOException {
+    private boolean sendPhotoChunks(byte[] fileBytes) throws IOException {
         int totalParts = 10;
         int chunkSize = fileBytes.length / totalParts;
         int extra = fileBytes.length % totalParts;
@@ -398,10 +419,12 @@ public class ClientHandler extends Thread {
 
             boolean acknowledged = false;
             int retries = 0;
-
+            int ack;
             while (!acknowledged && retries < 3) {
                 try {
+                    System.out.println("------------------------------------------------");
                     System.out.println("Part Number: "+ i + " Length: "+ chunk.length);
+
                     out.writeInt(i);
                     out.flush();
 
@@ -411,27 +434,25 @@ public class ClientHandler extends Thread {
                     out.write(chunk);
                     out.flush();
 
-                    socket.setSoTimeout(5000);
+                    Thread timer=startTimer(2500);
+                    timer.join();
+                    ack = in.readInt();
 
-                    int ack = in.readInt();
+                    System.out.println("After Reading");
                     System.out.println("🛂 Received ACK: " + ack + " (expecting " + i + ")");
                     if (ack == i) {
                         acknowledged = true;
                         flags[i] = true;
-                    } else if (ack < i) {
+                    }else if (ack < i && ack!=-3) {
                         System.out.println("🔁 Duplicate ACK received for part " + ack);
                         // Don't retry, just ignore and wait again
-                    } else {
-                        System.out.println("⚠️ Invalid or unexpected ACK: " + ack + ", retrying...");
+                    }else  {
+                        System.out.println("♻ ACK timeout for part: " + ack + ", retrying...");
                         retries++;
                     }
 
-                } catch (SocketTimeoutException e) {
-                    System.out.println("⏰ ACK timeout for part " + i + ", retrying...");
-                    retries++;
-                } catch (IOException e) {
-                    System.out.println("💥 IOException while sending part " + i + ": " + e.getMessage());
-                    return;
+                }catch (InterruptedException e) {
+                    throw new RuntimeException(e);
                 }
             }
             if(i==totalParts-1){
@@ -444,7 +465,7 @@ public class ClientHandler extends Thread {
                 System.out.println("❌ Failed to deliver part " + i + " after 3 retries. Aborting.");
                 out.writeInt(-1);  // special code for ABORT
                 out.flush();
-                return;
+                return false;
             }
         }
         boolean allDelivered = true;
@@ -456,8 +477,10 @@ public class ClientHandler extends Thread {
         }
         if (allDelivered) {
             System.out.println("✅ All chunks were successfully acknowledged.");
+            return true;
         } else {
             System.out.println("⚠️ Some chunks failed to be acknowledged.");
+            return false;
         }
     }
     private void sendAccompanyingText(int serverId, String photoName) throws IOException {

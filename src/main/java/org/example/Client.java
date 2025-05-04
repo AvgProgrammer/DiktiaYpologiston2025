@@ -80,6 +80,7 @@ public class Client extends Thread {
             int i=0;
             for (Notifications notification : notifications) {
                 System.out.println(i+")"+notification.PrintNotification());
+                i++;
             }
         }
     }
@@ -165,6 +166,7 @@ public class Client extends Thread {
                 }
                 System.out.println("Please enter the Id:");
                 client.setFindId(sc.nextInt());
+                client.setUpdateId(clientId);
                 client.start();
                 client.join();
             } else if (menu_choice == 3) {
@@ -241,7 +243,8 @@ public class Client extends Thread {
                     int NotificationsType=getNotificationList().get(index).getType();
 
                     Client client1= new Client(16);
-                    client1.setFindId(index);
+                    client1.setFindId(clientId);
+                    client1.setUpdateId(index);
                     client1.setNotifications(getNotificationList().get(index));
 
                     if(NotificationsType==1){
@@ -380,6 +383,9 @@ public class Client extends Thread {
                     System.out.println("Image path is null!");
                 }
             } else if (number == 12) {
+                out.writeInt(getUpdateId());
+                out.flush();
+
                 out.writeInt(getFindId());
                 out.flush();
 
@@ -436,6 +442,9 @@ public class Client extends Thread {
                 out.writeInt(getFindId());
                 out.flush();
 
+                out.writeInt(getUpdateId());
+                out.flush();
+
                 out.writeObject(getNotifications());
                 out.flush();
 
@@ -445,11 +454,12 @@ public class Client extends Thread {
             } else if (number==17) {
                 out.writeInt(1);
                 out.flush();
+                System.out.println("First-hand");
 
                 ObjectInputStream in = new ObjectInputStream(socket.getInputStream());
                 int anwser=in.readInt();
                 if(anwser==1){
-
+                    System.out.println("Positive Response Continue with the data request");
                     out.writeInt(getFindId());
                     out.flush();
 
@@ -468,6 +478,7 @@ public class Client extends Thread {
                         }
                     }
                     boolean check_number=false;
+                    boolean Itetional_Crash=true;
                     while(!allTrue || !check_number) {
                         int partNumber = in.readInt();
                          if(partNumber == -1){
@@ -482,20 +493,23 @@ public class Client extends Thread {
                              System.out.println("------------------------------------------------");
                              System.out.println("Part Number:"+ partNumber + " Length:"+ length);
                              byte[] chunk = new byte[length];
-                             in.readFully(chunk);
 
                              System.out.println("Received part " + partNumber + ", size: " + length);
+
+                             in.readFully(chunk);
                              if(!flags[partNumber]){
                                  receivedChunks.add(chunk);
                              }
+                             flags[partNumber]=true;
+                             if (partNumber == 2 && Itetional_Crash) {
+                                 System.out.println("Client intentionally skips ACK for message 3");// Simulate long delay
+                                 Itetional_Crash=false;
 
-                             if (partNumber == 2) {
-                                 System.out.println("Client intentionally skips ACK for message 3");
-                                 Thread.sleep(3000); // Simulate long delay
+                                 flags[partNumber]=false;
 
-                                 out.writeInt(partNumber);
+                                 out.writeInt(-3);
                                  out.flush();
-                             } else if (partNumber == 5) {
+                             }else if (partNumber == 5) {
                                  System.out.println("Client delays ACK for message 6");
                                  Thread.sleep(2000); // Simulate long delay
 
@@ -511,7 +525,7 @@ public class Client extends Thread {
                                  out.writeInt(partNumber); // Normal ACK
                                  out.flush();
                              }
-                             flags[partNumber]=true;
+
 
                              allTrue = true;
                              for (int j = 0; j < flags.length; j++) {
@@ -549,7 +563,11 @@ public class Client extends Thread {
                         String finalMsg = in.readUTF();
                         System.out.println(finalMsg);
                     }
-
+                    try {
+                        socket.close();
+                    } catch (IOException e) {
+                        System.out.println("⚠️ Error closing socket: " + e.getMessage());
+                    }
                 }
 
             }
